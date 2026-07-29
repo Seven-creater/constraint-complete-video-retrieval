@@ -2,8 +2,9 @@ import pickle
 from pathlib import Path
 
 import numpy as np
+import pytest
 
-from ccvr.io import write_json, write_jsonl
+from ccvr.io import read_json, write_json, write_jsonl
 from ccvr.scoring import _method_scores, _normalize, score_backbone
 
 
@@ -115,7 +116,7 @@ def test_score_backbone_runs_end_to_end_on_frozen_features(
                 "topic_id": f"{partition}:{topic_id}",
                 "partition": partition,
                 "split": split,
-                "partial_negatives": candidate_ids[1:],
+                "partial_negatives": candidate_ids[1:3],
                 "source_revision": "frozen",
             }
             manifest_rows.extend(
@@ -175,6 +176,23 @@ def test_score_backbone_runs_end_to_end_on_frozen_features(
             "maximum_parameters": 2000000,
         },
     }
+    protected_path = features / "news" / "v_news_dev_3.npy"
+    protected_value = np.load(protected_path)
+    protected_path.unlink()
+    with pytest.raises(RuntimeError, match="diagnostic positives or near misses"):
+        score_backbone(
+            "OpenCLIP",
+            raw,
+            manifest_path,
+            features,
+            run / "openclip",
+            config,
+            "cpu",
+        )
+    np.save(protected_path, protected_value)
+
+    safe_missing_path = features / "news" / "v_news_dev_4.npy"
+    safe_missing_path.unlink()
     summary = score_backbone(
         "OpenCLIP",
         raw,
@@ -187,3 +205,7 @@ def test_score_backbone_runs_end_to_end_on_frozen_features(
     assert summary["runtime"]["metric_rows"] > 0
     assert (run / "openclip" / "per_query_metrics.jsonl").exists()
     assert summary["prototype_gate"]["parameter_count"] == 2
+    coverage = read_json(run / "openclip" / "feature_coverage_exclusions.json")
+    assert coverage["status"] == "feature_coverage_audited"
+    assert coverage["excluded_candidates"] == 1
+    assert coverage["protected_intersections"] == []

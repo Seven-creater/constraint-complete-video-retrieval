@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import math
 import os
 import pickle
@@ -288,6 +290,81 @@ def _labels(candidate_ids: np.ndarray, positives: Iterable[int]) -> np.ndarray:
     )
 
 
+def _audit_feature_coverage(
+    raw: Path,
+    feature_root: Path,
+    rows: list[dict[str, Any]],
+    backbone: str,
+    output: Path,
+) -> dict[str, tuple[np.ndarray, list[str]]]:
+    protected: dict[str, set[int]] = defaultdict(set)
+    for row in rows:
+        partition = str(row["partition"])
+        protected[partition].update(int(value) for value in row["positives"])
+        protected[partition].update(
+            int(value) for value in row["partial_negatives"]
+        )
+
+    coverage: dict[str, tuple[np.ndarray, list[str]]] = {}
+    exclusions: list[dict[str, Any]] = []
+    unsafe: list[dict[str, Any]] = []
+    total_candidates = 0
+    for partition in ("news", "region", "instance", "dance", "others"):
+        candidate_ids, candidate_names, _ = _partition_metadata(raw, partition)
+        total_candidates += len(candidate_names)
+        kept_ids: list[int] = []
+        kept_names: list[str] = []
+        for candidate_id, candidate_name in zip(candidate_ids, candidate_names):
+            candidate_id = int(candidate_id)
+            feature_path = feature_root / partition / f"{candidate_name}.npy"
+            if feature_path.exists():
+                kept_ids.append(candidate_id)
+                kept_names.append(candidate_name)
+                continue
+            record = {
+                "partition": partition,
+                "candidate_id": candidate_id,
+                "candidate_name": candidate_name,
+                "reason": "missing_public_feature",
+            }
+            exclusions.append(record)
+            if candidate_id in protected[partition]:
+                unsafe.append(record)
+        coverage[partition] = (
+            np.asarray(kept_ids, dtype=np.int64),
+            kept_names,
+        )
+
+    canonical = json.dumps(
+        exclusions,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    report = {
+        "status": (
+            "feature_coverage_audited"
+            if not unsafe
+            else "feature_coverage_unsafe"
+        ),
+        "backbone": backbone,
+        "total_candidates": total_candidates,
+        "excluded_candidates": len(exclusions),
+        "excluded_fraction": (
+            len(exclusions) / total_candidates if total_candidates else 0.0
+        ),
+        "protected_intersections": unsafe,
+        "exclusions_sha256": hashlib.sha256(canonical).hexdigest(),
+        "exclusions": exclusions,
+    }
+    write_json(output / "feature_coverage_exclusions.json", report)
+    if unsafe:
+        raise RuntimeError(
+            "missing public features intersect diagnostic positives or near misses"
+        )
+    return coverage
+
+
 def _score_backbone_impl(
     backbone: str,
     raw: Path,
@@ -328,13 +405,20 @@ def _score_backbone_impl(
         ].append(row)
 
     output.mkdir(parents=True, exist_ok=True)
+    coverage = _audit_feature_coverage(
+        raw=raw,
+        feature_root=feature_root,
+        rows=selected,
+        backbone=backbone,
+        output=output,
+    )
     metrics_path = output / "per_query_metrics.jsonl"
     scores_path = output / "top10_scores.jsonl"
     metric_rows: list[dict[str, Any]] = []
     started = time.monotonic()
     with _JsonlSink(metrics_path) as metric_sink, _JsonlSink(scores_path) as score_sink:
         for partition in ("news", "region", "instance", "dance", "others"):
-            candidate_ids, candidate_names, _ = _partition_metadata(raw, partition)
+            candidate_ids, candidate_names = coverage[partition]
             target_features = _load_partition_features(
                 feature_root, partition, candidate_names
             )
