@@ -1,0 +1,49 @@
+{
+  "protocol_version": "ccvr_direction_gate_v1",
+  "target_direction": "constraint_complete_multimodal_untrimmed_video_retrieval",
+  "paper_core": "monotone_literal_coverage",
+  "dataset": {
+    "repository": "debby0527/MUVR",
+    "revision": "main",
+    "partitions": ["news", "region", "instance", "dance", "others"],
+    "split_fractions": [0.6, 0.2, 0.2],
+    "minimum_positives": 3,
+    "minimum_near_miss_negatives": 3,
+    "minimum_prevalence": 0.01,
+    "maximum_prevalence": 0.5
+  },
+  "data_gate": {
+    "minimum_eligible_queries": 10000,
+    "minimum_and_queries": 2000,
+    "minimum_or_queries": 2000,
+    "minimum_negated_queries": 3000,
+    "required_partitions": 5,
+    "required_algebra_agreement": 1.0
+  },
+  "problem_gate": {
+    "minimum_compositional_map_drop": 0.08,
+    "minimum_constraint_violation_at_10": 0.1,
+    "minimum_supporting_partitions": 4,
+    "simple_solution_maximum_violation_at_10": 0.05,
+    "simple_solution_minimum_oracle_relative_map": 0.95,
+    "bootstrap_samples": 2000,
+    "bootstrap_seed": 20260729
+  },
+  "prototype_gate": {
+    "minimum_absolute_map_gain": 0.03,
+    "minimum_relative_violation_reduction": 0.2,
+    "minimum_supporting_partitions": 4,
+    "maximum_atomic_map_drop": 0.01,
+    "seeds": [20260729, 20260730, 20260731],
+    "maximum_parameters": 2000000
+  },
+  "budget": {
+    "maximum_wall_hours": 48,
+    "maximum_gpu_hours": 4,
+    "maximum_new_storage_gb": 8,
+    "maximum_omni_calls": 0,
+    "allowed_gpus": [0, 1, 2, 3],
+    "forbidden_gpus": [4, 5, 6, 7]
+  }
+}
+
