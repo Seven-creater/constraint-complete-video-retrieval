@@ -4,7 +4,7 @@
   "paper_core": "monotone_literal_coverage",
   "dataset": {
     "repository": "debby0527/MUVR",
-    "revision": "main",
+    "revision": "00e8d2dff2b2b078bec0795ae5aca46d8f8c8539",
     "partitions": ["news", "region", "instance", "dance", "others"],
     "split_fractions": [0.6, 0.2, 0.2],
     "minimum_positives": 3,
@@ -46,4 +46,3 @@
     "forbidden_gpus": [4, 5, 6, 7]
   }
 }
-

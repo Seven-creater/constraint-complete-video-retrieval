@@ -29,6 +29,10 @@ evaluates five parameter-free baselines and twelve two-parameter monotone
 coverage variants, selects the latter on deterministic dev-topic subsamples,
 and evaluates the frozen test topics.
 
+`HF_ENDPOINT` may point to an HTTPS mirror when the execution host cannot reach
+Hugging Face directly. The dataset commit, file hashes, and LFS hashes remain
+frozen and are verified independently of the transport endpoint.
+
 The public MUVR paper reports 93,885 possible single/binary tag queries, while
 the current public files may contain fewer rows. This repository reports the
 observed release exactly and never substitutes the paper count.

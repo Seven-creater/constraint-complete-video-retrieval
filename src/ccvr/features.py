@@ -10,6 +10,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, BinaryIO
 
 from .io import read_json, write_json
+from .remote import huggingface_endpoint
 
 
 DATASET_ID = "debby0527/MUVR"
@@ -42,11 +43,12 @@ def _fetch_json(url: str) -> Any:
         return json.load(response)
 
 
-def _archive_descriptor(backbone: str) -> dict[str, Any]:
+def _archive_descriptor(backbone: str, revision: str) -> dict[str, Any]:
     if backbone not in ARCHIVES:
         raise ValueError(f"unsupported backbone: {backbone}")
+    endpoint = huggingface_endpoint()
     items = _fetch_json(
-        f"https://huggingface.co/api/datasets/{DATASET_ID}/tree/main/"
+        f"{endpoint}/api/datasets/{DATASET_ID}/tree/{revision}/"
         "features/VLMs_1_15?recursive=false&expand=true"
     )
     expected_path = ARCHIVES[backbone]
@@ -90,7 +92,9 @@ def stream_extract_features(
     gate = read_json(gate_dir / "data_audit.json")
     if not gate.get("accepted"):
         raise RuntimeError("feature extraction is forbidden until the data gate passes")
-    descriptor = _archive_descriptor(backbone)
+    revision = str(gate["source_revision"])
+    endpoint = huggingface_endpoint()
+    descriptor = _archive_descriptor(backbone, revision)
     sentinel = output / backbone / "feature_lock.json"
     if sentinel.exists():
         existing = read_json(sentinel)
@@ -106,7 +110,7 @@ def stream_extract_features(
         )
 
     url = (
-        f"https://huggingface.co/datasets/{DATASET_ID}/resolve/main/"
+        f"{endpoint}/datasets/{DATASET_ID}/resolve/{revision}/"
         f"{descriptor['path']}?download=true"
     )
     request = urllib.request.Request(url, headers={"User-Agent": "ccvr/0.1"})
@@ -146,10 +150,11 @@ def stream_extract_features(
         "archive_size": descriptor["size"],
         "archive_sha256": descriptor["sha256"],
         "archive_commit": descriptor["commit"],
+        "dataset_revision": revision,
+        "endpoint": endpoint,
         "extracted_files": file_count,
         "extracted_bytes": _directory_size(output / backbone),
         "data_gate_manifest_sha256": gate["manifest_sha256"],
     }
     write_json(sentinel, lock)
     return lock
-

@@ -4,6 +4,9 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
+: "${HF_ENDPOINT:=https://huggingface.co}"
+export HF_ENDPOINT
+
 RUN="runs/direction_gate"
 RAW="data/raw"
 FEATURES="data/features"

@@ -14,6 +14,7 @@ from .logic import (
     operator_aware_near_misses,
     parse_expression,
 )
+from .remote import huggingface_endpoint
 
 
 DATASET_ID = "debby0527/MUVR"
@@ -47,15 +48,18 @@ def _download(url: str, destination: Path) -> None:
 
 
 def fetch_metadata(output: Path, revision: str = "main") -> dict[str, Any]:
-    api = _fetch_json(f"https://huggingface.co/api/datasets/{DATASET_ID}")
-    resolved_revision = str(api.get("sha") or revision)
+    endpoint = huggingface_endpoint()
+    resolved_revision = revision
+    if revision == "main":
+        api = _fetch_json(f"{endpoint}/api/datasets/{DATASET_ID}")
+        resolved_revision = str(api.get("sha") or revision)
     files: dict[str, dict[str, Any]] = {}
     for partition in PARTITIONS:
         for filename in METADATA_FILES:
             relative = Path(partition) / filename
             destination = output / relative
             url = (
-                f"https://huggingface.co/datasets/{DATASET_ID}/resolve/"
+                f"{endpoint}/datasets/{DATASET_ID}/resolve/"
                 f"{resolved_revision}/annotations/retrieval/{partition}/{filename}"
             )
             if not destination.exists():
@@ -68,6 +72,7 @@ def fetch_metadata(output: Path, revision: str = "main") -> dict[str, Any]:
         "dataset": DATASET_ID,
         "requested_revision": revision,
         "resolved_revision": resolved_revision,
+        "endpoint": endpoint,
         "files": files,
     }
     write_json(output / "source_lock.json", lock)
