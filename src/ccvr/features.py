@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import hashlib
+import http.client
 import json
 import os
 import shutil
 import tarfile
+import time
+import urllib.error
 import urllib.request
 from pathlib import Path, PurePosixPath
 from typing import Any, BinaryIO
@@ -20,18 +23,99 @@ ARCHIVES = {
 }
 
 
-class _HashingReader:
-    def __init__(self, stream: BinaryIO) -> None:
-        self.stream = stream
+class _ResumableHashingReader:
+    def __init__(
+        self,
+        url: str,
+        expected_size: int,
+        timeout: int = 180,
+        maximum_reconnects: int = 12,
+    ) -> None:
+        self.url = url
+        self.expected_size = expected_size
+        self.timeout = timeout
+        self.maximum_reconnects = maximum_reconnects
+        self.stream: BinaryIO | None = None
         self.digest = hashlib.sha256()
         self.bytes_read = 0
+        self.reconnects = 0
+
+    def __enter__(self) -> "_ResumableHashingReader":
+        self._connect(reconnecting=False)
+        return self
+
+    def __exit__(self, exc_type: Any, exc: Any, traceback: Any) -> None:
+        if self.stream is not None:
+            self.stream.close()
+
+    def _connect(self, reconnecting: bool) -> None:
+        if self.stream is not None:
+            self.stream.close()
+            self.stream = None
+        while True:
+            if reconnecting:
+                if self.reconnects >= self.maximum_reconnects:
+                    raise RuntimeError(
+                        "feature stream exhausted its reconnect budget"
+                    )
+                self.reconnects += 1
+                time.sleep(min(2 ** (self.reconnects - 1), 30))
+            headers = {
+                "Accept-Encoding": "identity",
+                "User-Agent": "ccvr/0.1",
+            }
+            if self.bytes_read:
+                headers["Range"] = f"bytes={self.bytes_read}-"
+            request = urllib.request.Request(self.url, headers=headers)
+            try:
+                response = urllib.request.urlopen(request, timeout=self.timeout)
+            except (OSError, TimeoutError, urllib.error.URLError):
+                reconnecting = True
+                continue
+            status = int(getattr(response, "status", response.getcode()))
+            if self.bytes_read:
+                content_range = str(response.headers.get("Content-Range") or "")
+                expected_prefix = f"bytes {self.bytes_read}-"
+                if status != 206 or not content_range.startswith(expected_prefix):
+                    response.close()
+                    raise RuntimeError(
+                        "server did not honor the exact feature byte range"
+                    )
+            elif status not in {200, 206}:
+                response.close()
+                raise RuntimeError(f"unexpected feature response status: {status}")
+            self.stream = response
+            return
 
     def read(self, size: int = -1) -> bytes:
-        value = self.stream.read(size)
-        if value:
+        if self.stream is None:
+            raise RuntimeError("feature stream is not open")
+        remaining_archive = self.expected_size - self.bytes_read
+        if remaining_archive <= 0:
+            return b""
+        requested = remaining_archive if size < 0 else min(size, remaining_archive)
+        chunks: list[bytes] = []
+        remaining = requested
+        while remaining:
+            try:
+                value = self.stream.read(remaining)
+            except (
+                EOFError,
+                OSError,
+                TimeoutError,
+                http.client.IncompleteRead,
+                urllib.error.URLError,
+            ):
+                self._connect(reconnecting=True)
+                continue
+            if not value:
+                self._connect(reconnecting=True)
+                continue
             self.digest.update(value)
             self.bytes_read += len(value)
-        return value
+            remaining -= len(value)
+            chunks.append(value)
+        return b"".join(chunks)
 
     def readable(self) -> bool:
         return True
@@ -113,10 +197,8 @@ def stream_extract_features(
         f"{endpoint}/datasets/{DATASET_ID}/resolve/{revision}/"
         f"{descriptor['path']}?download=true"
     )
-    request = urllib.request.Request(url, headers={"User-Agent": "ccvr/0.1"})
     file_count = 0
-    with urllib.request.urlopen(request, timeout=180) as response:
-        reader = _HashingReader(response)
+    with _ResumableHashingReader(url, descriptor["size"]) as reader:
         with tarfile.open(fileobj=reader, mode="r|") as archive:
             for member in archive:
                 if not member.isfile():
@@ -152,6 +234,7 @@ def stream_extract_features(
         "archive_commit": descriptor["commit"],
         "dataset_revision": revision,
         "endpoint": endpoint,
+        "transport_reconnects": reader.reconnects,
         "extracted_files": file_count,
         "extracted_bytes": _directory_size(output / backbone),
         "data_gate_manifest_sha256": gate["manifest_sha256"],
